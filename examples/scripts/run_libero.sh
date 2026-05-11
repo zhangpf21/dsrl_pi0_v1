@@ -37,3 +37,5 @@ python3 examples/launch_train_sim.py \
 --action_magnitude 1.0 \
 --query_freq 20 \
 --hidden_dims 128 \
+--task_id 57 \
+--steering_strength_schedule 0.5,1.0,1.5

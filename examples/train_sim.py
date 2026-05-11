@@ -113,11 +113,12 @@ def main(variant):
     if variant.env == 'libero':
         benchmark_dict = benchmark.get_benchmark_dict()
         task_suite = benchmark_dict["libero_90"]()
-        task_id = 57
+        task_id = variant.task_id
         task = task_suite.get_task(task_id)
         env, task_description = _get_libero_env(task, 256, variant.seed)
         eval_env = env
         variant.task_description = task_description
+        print(f'using LIBERO task {task_id}: {task_description}')
         variant.env_max_reward = 1
         variant.max_timesteps = 400
     elif variant.env == 'aloha_cube':
@@ -133,6 +134,8 @@ def main(variant):
         eval_env = copy.deepcopy(env)
         variant.env_max_reward = 4
         variant.max_timesteps = 400
+
+    print('steering strength schedule:', variant.steering_strength_schedule)
         
 
     group_name = variant.prefix + '_' + variant.launch_group_id

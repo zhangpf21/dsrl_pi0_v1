@@ -6,6 +6,28 @@ from openpi_client import image_tools
 import math
 import PIL
 
+def _parse_steering_strength_schedule(variant):
+    raw_schedule = variant.get("steering_strength_schedule", "1.0")
+    if isinstance(raw_schedule, (int, float)):
+        return [float(raw_schedule)]
+    schedule = [float(x.strip()) for x in str(raw_schedule).split(",") if x.strip()]
+    if not schedule:
+        raise ValueError("steering_strength_schedule must contain at least one value")
+    return schedule
+
+def get_steering_strength(variant, obs, t):
+    del obs
+    schedule = _parse_steering_strength_schedule(variant)
+    if len(schedule) == 1:
+        return schedule[0]
+
+    query_frequency = max(1, int(variant.query_freq))
+    total_query_steps = max(1, math.ceil(variant.max_timesteps / query_frequency))
+    query_step = min(t // query_frequency, total_query_steps - 1)
+    phase = query_step / total_query_steps
+    schedule_id = min(int(phase * len(schedule)), len(schedule) - 1)
+    return schedule[schedule_id]
+
 def _quat2axisangle(quat):
     """
     Copied from robosuite: https://github.com/ARISE-Initiative/robosuite/blob/eafb81f54ffc104f905ee48a16bb15f059176ad3/robosuite/utils/transform_utils.py#L490C1-L512C55
@@ -146,6 +168,13 @@ def trajwise_alternating_training_loop(variant, agent, env, eval_env, online_rep
                             'episode_return (exploration)': traj['episode_return'],
                             'is_success (exploration)': int(traj['is_success']),
                         }, i)
+                        if traj['steering_strengths']:
+                            steering_strengths = np.array(traj['steering_strengths'])
+                            wandb_logger.log({
+                                'steering/mean_strength': np.mean(steering_strengths),
+                                'steering/min_strength': np.min(steering_strengths),
+                                'steering/max_strength': np.max(steering_strengths),
+                            }, i)
 
                     if i % variant.eval_interval == 0:
                         wandb_logger.log({'num_online_samples': len(online_replay_buffer)}, step=i)
@@ -206,6 +235,7 @@ def collect_traj(variant, agent, env, i, agent_dp=None):
     rewards = []
     action_list = []
     obs_list = []
+    steering_strengths = []
 
     for t in tqdm(range(max_timesteps)):
         curr_image = obs_to_img(obs, variant)
@@ -238,6 +268,9 @@ def collect_traj(variant, agent, env, i, agent_dp=None):
                 # sac agent predicts the noise for diffusion model
                 actions_noise = agent.sample_actions(obs_dict)
                 actions_noise = np.reshape(actions_noise, agent.action_chunk_shape)
+                strength = get_steering_strength(variant, obs, t)
+                actions_noise = strength * actions_noise
+                steering_strengths.append(strength)
                 noise = np.repeat(actions_noise[-1:, :], 50 - actions_noise.shape[0], axis=0)
                 noise = jax.numpy.concatenate([actions_noise, noise], axis=0)[None]
             
@@ -294,7 +327,8 @@ def collect_traj(variant, agent, env, i, agent_dp=None):
         'is_success': is_success,
         'episode_return': episode_return,
         'images': image_list,
-        'env_steps': t + 1 
+        'env_steps': t + 1,
+        'steering_strengths': steering_strengths,
     }
 
 def perform_control_eval(agent, env, i, variant, wandb_logger, agent_dp=None):
@@ -306,6 +340,7 @@ def perform_control_eval(agent, env, i, variant, wandb_logger, agent_dp=None):
     highest_rewards = []
     success_rates = []
     episode_lens = []
+    eval_steering_strengths = []
 
     rng = jax.random.PRNGKey(variant.seed+456)
 
@@ -346,6 +381,9 @@ def perform_control_eval(agent, env, i, variant, wandb_logger, agent_dp=None):
                 else:
                     actions_noise = agent.sample_actions(obs_dict)
                     actions_noise = np.reshape(actions_noise, agent.action_chunk_shape)
+                    strength = get_steering_strength(variant, obs, t)
+                    actions_noise = strength * actions_noise
+                    eval_steering_strengths.append(strength)
                     noise = np.repeat(actions_noise[-1:, :], 50 - actions_noise.shape[0], axis=0)
                     noise = jax.numpy.concatenate([actions_noise, noise], axis=0)[None]
                     
@@ -386,6 +424,13 @@ def perform_control_eval(agent, env, i, variant, wandb_logger, agent_dp=None):
     wandb_logger.log({'evaluation/avg_return': avg_return}, step=i)
     wandb_logger.log({'evaluation/success_rate': success_rate}, step=i)
     wandb_logger.log({'evaluation/avg_episode_len': avg_episode_len}, step=i)
+    if eval_steering_strengths:
+        eval_steering_strengths = np.array(eval_steering_strengths)
+        wandb_logger.log({
+            'evaluation/steering_strength_mean': np.mean(eval_steering_strengths),
+            'evaluation/steering_strength_min': np.min(eval_steering_strengths),
+            'evaluation/steering_strength_max': np.max(eval_steering_strengths),
+        }, step=i)
     for r in range(env_max_reward+1):
         more_or_equal_r = (np.array(highest_rewards) >= r).sum()
         more_or_equal_r_rate = more_or_equal_r / variant.eval_episodes

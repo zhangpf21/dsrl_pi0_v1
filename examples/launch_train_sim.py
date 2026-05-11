@@ -25,6 +25,8 @@ if __name__ == '__main__':
     parser.add_argument('--multi_grad_step', default=1, help='Number of graident steps to take per environment step, aka UTD', type=int)
     parser.add_argument('--resize_image', default=-1, help='the size of image if need resizing', type=int)
     parser.add_argument('--query_freq', default=-1, help='query frequency', type=int)
+    parser.add_argument('--task_id', default=57, help='LIBERO task id.', type=int)
+    parser.add_argument('--steering_strength_schedule', default='1.0', help='Comma-separated steering strengths over episode query phases, e.g. 0.5,1.0,1.5.', type=str)
     
     train_args_dict = dict(
         actor_lr=1e-4,
