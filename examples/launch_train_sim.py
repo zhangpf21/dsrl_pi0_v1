@@ -27,6 +27,8 @@ if __name__ == '__main__':
     parser.add_argument('--query_freq', default=-1, help='query frequency', type=int)
     parser.add_argument('--task_id', default=57, help='LIBERO task id.', type=int)
     parser.add_argument('--steering_strength_schedule', default='1.0', help='Comma-separated steering strengths over episode query phases, e.g. 0.5,1.0,1.5.', type=str)
+    parser.add_argument('--learn_steering_strength', default=0, help='Whether SAC actor outputs an extra learned steering-strength gate.', type=int)
+    parser.add_argument('--steering_max_strength', default=2.0, help='Maximum learned steering strength when learn_steering_strength=1.', type=float)
     
     train_args_dict = dict(
         actor_lr=1e-4,

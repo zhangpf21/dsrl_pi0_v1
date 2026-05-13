@@ -6,6 +6,12 @@ from openpi_client import image_tools
 import math
 import PIL
 
+PI0_NOISE_DIM = 32
+PI0_NOISE_HORIZON = 50
+
+def _learns_steering_strength(variant):
+    return bool(int(variant.get("learn_steering_strength", 0)))
+
 def _parse_steering_strength_schedule(variant):
     raw_schedule = variant.get("steering_strength_schedule", "1.0")
     if isinstance(raw_schedule, (int, float)):
@@ -27,6 +33,42 @@ def get_steering_strength(variant, obs, t):
     phase = query_step / total_query_steps
     schedule_id = min(int(phase * len(schedule)), len(schedule) - 1)
     return schedule[schedule_id]
+
+def _gate_raw_from_strength(variant, strength):
+    action_magnitude = max(float(variant.get("action_magnitude", 1.0)), 1e-6)
+    max_strength = max(float(variant.get("steering_max_strength", 1.0)), 1e-6)
+    gate_unit = np.clip(strength / max_strength, 0.0, 1.0)
+    return (gate_unit * 2.0 - 1.0) * action_magnitude
+
+def actor_action_to_pi0_noise(variant, raw_action):
+    raw_action = np.asarray(raw_action)
+    if not _learns_steering_strength(variant):
+        return raw_action, np.ones(raw_action.shape[:-1] + (1,), dtype=raw_action.dtype)
+
+    if raw_action.shape[-1] != PI0_NOISE_DIM + 1:
+        raise ValueError(f"Expected learned steering action dim {PI0_NOISE_DIM + 1}, got {raw_action.shape[-1]}")
+
+    noise_direction = raw_action[..., :PI0_NOISE_DIM]
+    gate_raw = raw_action[..., PI0_NOISE_DIM:PI0_NOISE_DIM + 1]
+    action_magnitude = max(float(variant.get("action_magnitude", 1.0)), 1e-6)
+    max_strength = float(variant.get("steering_max_strength", 1.0))
+
+    gate_unit = (gate_raw / action_magnitude + 1.0) / 2.0
+    gate_unit = np.clip(gate_unit, 0.0, 1.0)
+    strengths = gate_unit * max_strength
+    return strengths * noise_direction, strengths
+
+def make_replay_action_from_pi0_noise(variant, actions_noise):
+    actions_noise = np.asarray(actions_noise)
+    if not _learns_steering_strength(variant):
+        return actions_noise
+
+    max_strength = max(float(variant.get("steering_max_strength", 1.0)), 1e-6)
+    init_strength = min(1.0, max_strength)
+    gate_raw = _gate_raw_from_strength(variant, init_strength)
+    gate = np.full(actions_noise.shape[:-1] + (1,), gate_raw, dtype=actions_noise.dtype)
+    noise_direction = actions_noise / max(init_strength, 1e-6)
+    return np.concatenate([noise_direction, gate], axis=-1)
 
 def _quat2axisangle(quat):
     """
@@ -260,22 +302,29 @@ def collect_traj(variant, agent, env, i, agent_dp=None):
             obs_pi_zero = obs_to_pi_zero_input(obs, variant)
             if i == 0:
                 # for initial round of data collection, we sample from standard gaussian noise
-                noise = jax.random.normal(key, (1, *agent.action_chunk_shape))
-                noise_repeat = jax.numpy.repeat(noise[:, -1:, :], 50 - noise.shape[1], axis=1)
+                noise = jax.random.normal(key, (1, agent.action_chunk_shape[0], PI0_NOISE_DIM))
+                noise_repeat = jax.numpy.repeat(noise[:, -1:, :], PI0_NOISE_HORIZON - noise.shape[1], axis=1)
                 noise = jax.numpy.concatenate([noise, noise_repeat], axis=1)
                 actions_noise = noise[0, :agent.action_chunk_shape[0], :]
+                replay_action = make_replay_action_from_pi0_noise(variant, actions_noise)
             else:
                 # sac agent predicts the noise for diffusion model
-                actions_noise = agent.sample_actions(obs_dict)
-                actions_noise = np.reshape(actions_noise, agent.action_chunk_shape)
-                strength = get_steering_strength(variant, obs, t)
-                actions_noise = strength * actions_noise
-                steering_strengths.append(strength)
-                noise = np.repeat(actions_noise[-1:, :], 50 - actions_noise.shape[0], axis=0)
+                raw_action = agent.sample_actions(obs_dict)
+                raw_action = np.reshape(raw_action, agent.action_chunk_shape)
+                if _learns_steering_strength(variant):
+                    actions_noise, strengths = actor_action_to_pi0_noise(variant, raw_action)
+                    steering_strengths.append(float(np.mean(strengths)))
+                    replay_action = raw_action
+                else:
+                    strength = get_steering_strength(variant, obs, t)
+                    actions_noise = strength * raw_action
+                    steering_strengths.append(strength)
+                    replay_action = actions_noise
+                noise = np.repeat(actions_noise[-1:, :], PI0_NOISE_HORIZON - actions_noise.shape[0], axis=0)
                 noise = jax.numpy.concatenate([actions_noise, noise], axis=0)[None]
             
             actions = agent_dp.infer(obs_pi_zero, noise=noise)["actions"]
-            action_list.append(actions_noise)
+            action_list.append(replay_action)
             obs_list.append(obs_dict)
      
         action_t = actions[t % query_frequency]
@@ -377,14 +426,18 @@ def perform_control_eval(agent, env, i, variant, wandb_logger, agent_dp=None):
                 
                 if i == 0:
                     # for initial evaluation, we sample from standard gaussian noise to evaluate the base policy's performance
-                    noise = jax.random.normal(rng, (1, 50, 32))
+                    noise = jax.random.normal(rng, (1, PI0_NOISE_HORIZON, PI0_NOISE_DIM))
                 else:
-                    actions_noise = agent.sample_actions(obs_dict)
-                    actions_noise = np.reshape(actions_noise, agent.action_chunk_shape)
-                    strength = get_steering_strength(variant, obs, t)
-                    actions_noise = strength * actions_noise
-                    eval_steering_strengths.append(strength)
-                    noise = np.repeat(actions_noise[-1:, :], 50 - actions_noise.shape[0], axis=0)
+                    raw_action = agent.sample_actions(obs_dict)
+                    raw_action = np.reshape(raw_action, agent.action_chunk_shape)
+                    if _learns_steering_strength(variant):
+                        actions_noise, strengths = actor_action_to_pi0_noise(variant, raw_action)
+                        eval_steering_strengths.append(float(np.mean(strengths)))
+                    else:
+                        strength = get_steering_strength(variant, obs, t)
+                        actions_noise = strength * raw_action
+                        eval_steering_strengths.append(strength)
+                    noise = np.repeat(actions_noise[-1:, :], PI0_NOISE_HORIZON - actions_noise.shape[0], axis=0)
                     noise = jax.numpy.concatenate([actions_noise, noise], axis=0)[None]
                     
                 actions = agent_dp.infer(obs_pi_zero, noise=noise)["actions"]
