@@ -138,6 +138,7 @@ def main(variant):
 
     print('steering strength schedule:', variant.steering_strength_schedule)
     print('learn steering strength:', variant.learn_steering_strength)
+    print('steering min strength:', variant.steering_min_strength)
     print('steering max strength:', variant.steering_max_strength)
         
 

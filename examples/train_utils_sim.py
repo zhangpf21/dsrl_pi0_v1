@@ -36,8 +36,10 @@ def get_steering_strength(variant, obs, t):
 
 def _gate_raw_from_strength(variant, strength):
     action_magnitude = max(float(variant.get("action_magnitude", 1.0)), 1e-6)
-    max_strength = max(float(variant.get("steering_max_strength", 1.0)), 1e-6)
-    gate_unit = np.clip(strength / max_strength, 0.0, 1.0)
+    min_strength = float(variant.get("steering_min_strength", 0.0))
+    max_strength = float(variant.get("steering_max_strength", 1.0))
+    strength_range = max(max_strength - min_strength, 1e-6)
+    gate_unit = np.clip((strength - min_strength) / strength_range, 0.0, 1.0)
     return (gate_unit * 2.0 - 1.0) * action_magnitude
 
 def actor_action_to_pi0_noise(variant, raw_action):
@@ -51,11 +53,13 @@ def actor_action_to_pi0_noise(variant, raw_action):
     noise_direction = raw_action[..., :PI0_NOISE_DIM]
     gate_raw = raw_action[..., PI0_NOISE_DIM:PI0_NOISE_DIM + 1]
     action_magnitude = max(float(variant.get("action_magnitude", 1.0)), 1e-6)
+    min_strength = float(variant.get("steering_min_strength", 0.0))
     max_strength = float(variant.get("steering_max_strength", 1.0))
+    strength_range = max(max_strength - min_strength, 1e-6)
 
     gate_unit = (gate_raw / action_magnitude + 1.0) / 2.0
     gate_unit = np.clip(gate_unit, 0.0, 1.0)
-    strengths = gate_unit * max_strength
+    strengths = min_strength + gate_unit * strength_range
     return strengths * noise_direction, strengths
 
 def make_replay_action_from_pi0_noise(variant, actions_noise):
@@ -63,8 +67,9 @@ def make_replay_action_from_pi0_noise(variant, actions_noise):
     if not _learns_steering_strength(variant):
         return actions_noise
 
-    max_strength = max(float(variant.get("steering_max_strength", 1.0)), 1e-6)
-    init_strength = min(1.0, max_strength)
+    min_strength = float(variant.get("steering_min_strength", 0.0))
+    max_strength = float(variant.get("steering_max_strength", 1.0))
+    init_strength = np.clip(1.0, min_strength, max_strength)
     gate_raw = _gate_raw_from_strength(variant, init_strength)
     gate = np.full(actions_noise.shape[:-1] + (1,), gate_raw, dtype=actions_noise.dtype)
     noise_direction = actions_noise / max(init_strength, 1e-6)

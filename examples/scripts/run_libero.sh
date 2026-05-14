@@ -40,4 +40,5 @@ python3 examples/launch_train_sim.py \
 --task_id 57 \
 --steering_strength_schedule 1.0 \
 --learn_steering_strength 1 \
---steering_max_strength 2.0
+--steering_min_strength 0.5 \
+--steering_max_strength 1.5
