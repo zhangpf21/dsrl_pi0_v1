@@ -28,6 +28,7 @@ if __name__ == '__main__':
     parser.add_argument('--task_id', default=57, help='LIBERO task id.', type=int)
     parser.add_argument('--steering_strength_schedule', default='1.0', help='Comma-separated steering strengths over episode query phases, e.g. 0.5,1.0,1.5.', type=str)
     parser.add_argument('--learn_steering_strength', default=0, help='Whether SAC actor outputs an extra learned steering-strength gate.', type=int)
+    parser.add_argument('--learn_strength_warmup_steps', default=0, help='Use the hand-written steering schedule for this many SAC update steps before using the learned gate.', type=int)
     parser.add_argument('--steering_min_strength', default=0.0, help='Minimum learned steering strength when learn_steering_strength=1.', type=float)
     parser.add_argument('--steering_max_strength', default=2.0, help='Maximum learned steering strength when learn_steering_strength=1.', type=float)
     

@@ -1,7 +1,6 @@
 #!/bin/bash
 proj_name=DSRL_pi0_Libero
 device_id=0
-#fff
 export DISPLAY=:0
 export MUJOCO_GL=egl
 export PYOPENGL_PLATFORM=egl  
@@ -30,7 +29,7 @@ python3 examples/launch_train_sim.py \
 --max_steps 500000  \
 --eval_interval 10000 \
 --log_interval 500 \
---eval_episodes 10 \
+--eval_episodes 50 \
 --multi_grad_step 20 \
 --start_online_updates 500 \
 --resize_image 64 \
@@ -38,7 +37,8 @@ python3 examples/launch_train_sim.py \
 --query_freq 20 \
 --hidden_dims 128 \
 --task_id 57 \
---steering_strength_schedule 1.0 \
+--steering_strength_schedule 0.5,1.0,1.5 \
 --learn_steering_strength 1 \
+--learn_strength_warmup_steps 20000 \
 --steering_min_strength 0.5 \
 --steering_max_strength 1.5

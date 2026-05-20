@@ -12,6 +12,10 @@ PI0_NOISE_HORIZON = 50
 def _learns_steering_strength(variant):
     return bool(int(variant.get("learn_steering_strength", 0)))
 
+def _uses_strength_warmup(variant, i):
+    warmup_steps = int(variant.get("learn_strength_warmup_steps", 0))
+    return _learns_steering_strength(variant) and warmup_steps > 0 and i < warmup_steps
+
 def _parse_steering_strength_schedule(variant):
     raw_schedule = variant.get("steering_strength_schedule", "1.0")
     if isinstance(raw_schedule, (int, float)):
@@ -73,6 +77,12 @@ def make_replay_action_from_pi0_noise(variant, actions_noise):
     gate_raw = _gate_raw_from_strength(variant, init_strength)
     gate = np.full(actions_noise.shape[:-1] + (1,), gate_raw, dtype=actions_noise.dtype)
     noise_direction = actions_noise / max(init_strength, 1e-6)
+    return np.concatenate([noise_direction, gate], axis=-1)
+
+def make_replay_action_from_direction_and_strength(variant, noise_direction, strength):
+    noise_direction = np.asarray(noise_direction)
+    gate_raw = _gate_raw_from_strength(variant, strength)
+    gate = np.full(noise_direction.shape[:-1] + (1,), gate_raw, dtype=noise_direction.dtype)
     return np.concatenate([noise_direction, gate], axis=-1)
 
 def _quat2axisangle(quat):
@@ -221,6 +231,7 @@ def trajwise_alternating_training_loop(variant, agent, env, eval_env, online_rep
                                 'steering/mean_strength': np.mean(steering_strengths),
                                 'steering/min_strength': np.min(steering_strengths),
                                 'steering/max_strength': np.max(steering_strengths),
+                                'steering/using_schedule_warmup': int(_uses_strength_warmup(variant, i)),
                             }, i)
 
                     if i % variant.eval_interval == 0:
@@ -317,9 +328,18 @@ def collect_traj(variant, agent, env, i, agent_dp=None):
                 raw_action = agent.sample_actions(obs_dict)
                 raw_action = np.reshape(raw_action, agent.action_chunk_shape)
                 if _learns_steering_strength(variant):
-                    actions_noise, strengths = actor_action_to_pi0_noise(variant, raw_action)
-                    steering_strengths.append(float(np.mean(strengths)))
-                    replay_action = raw_action
+                    noise_direction = raw_action[..., :PI0_NOISE_DIM]
+                    if _uses_strength_warmup(variant, i):
+                        strength = get_steering_strength(variant, obs, t)
+                        actions_noise = strength * noise_direction
+                        replay_action = make_replay_action_from_direction_and_strength(
+                            variant, noise_direction, strength
+                        )
+                        steering_strengths.append(strength)
+                    else:
+                        actions_noise, strengths = actor_action_to_pi0_noise(variant, raw_action)
+                        steering_strengths.append(float(np.mean(strengths)))
+                        replay_action = raw_action
                 else:
                     strength = get_steering_strength(variant, obs, t)
                     actions_noise = strength * raw_action
@@ -436,8 +456,14 @@ def perform_control_eval(agent, env, i, variant, wandb_logger, agent_dp=None):
                     raw_action = agent.sample_actions(obs_dict)
                     raw_action = np.reshape(raw_action, agent.action_chunk_shape)
                     if _learns_steering_strength(variant):
-                        actions_noise, strengths = actor_action_to_pi0_noise(variant, raw_action)
-                        eval_steering_strengths.append(float(np.mean(strengths)))
+                        noise_direction = raw_action[..., :PI0_NOISE_DIM]
+                        if _uses_strength_warmup(variant, i):
+                            strength = get_steering_strength(variant, obs, t)
+                            actions_noise = strength * noise_direction
+                            eval_steering_strengths.append(strength)
+                        else:
+                            actions_noise, strengths = actor_action_to_pi0_noise(variant, raw_action)
+                            eval_steering_strengths.append(float(np.mean(strengths)))
                     else:
                         strength = get_steering_strength(variant, obs, t)
                         actions_noise = strength * raw_action
