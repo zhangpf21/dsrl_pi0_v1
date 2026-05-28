@@ -35,6 +35,17 @@ from openpi.shared import download
 home_dir = os.environ['HOME']
 compilation_cache.initialize_cache(os.path.join(home_dir, 'jax_compilation_cache'))
 
+
+def _dsrl_action_dim(variant):
+    train_kwargs = getattr(variant, 'train_kwargs', {})
+    if train_kwargs.get('use_adapter_conditioning', 0):
+        return (
+            int(train_kwargs.get('noise_dim', 32))
+            + int(train_kwargs.get('adapter_feature_dim', 1024))
+            + int(train_kwargs.get('adapter_gate_dim', 1))
+        )
+    return 32
+
 def _get_libero_env(task, resolution, seed):
     """Initializes and returns the LIBERO environment, along with the task description."""
     task_description = task.language
@@ -73,7 +84,7 @@ class DummyEnv(gym.ObservationWrapper):
                 state_dim = 14
             obs_dict['state'] = Box(low=-1.0, high=1.0, shape=(state_dim, 1), dtype=np.float32)
         self.observation_space = Dict(obs_dict)
-        self.action_space = Box(low=-1, high=1, shape=(1, 32,), dtype=np.float32) # 32 is the noise action space of pi 0
+        self.action_space = Box(low=-1, high=1, shape=(1, _dsrl_action_dim(variant),), dtype=np.float32)
 
 
 def main(variant):
@@ -161,4 +172,3 @@ def main(variant):
     replay_buffer = online_replay_buffer
     replay_buffer.seed(variant.seed)
     trajwise_alternating_training_loop(variant, agent, env, eval_env, online_replay_buffer, replay_buffer, wandb_logger, shard_fn=shard_fn, agent_dp=agent_dp)
- 

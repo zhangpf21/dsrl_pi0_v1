@@ -32,4 +32,12 @@ python3 examples/launch_train_sim.py \
 --action_magnitude 2.0 \
 --query_freq 50 \
 --hidden_dims 128 \
---target_entropy 0.0 
+--use_adapter_conditioning 1 \
+--noise_dim 32 \
+--control_dim 16 \
+--adapter_feature_dim 1024 \
+--adapter_gate_dim 1 \
+--adapter_hidden_dim 128 \
+--adapter_l2_coef 1e-4 \
+--gate_l1_coef 1e-4 \
+--target_entropy 0.0

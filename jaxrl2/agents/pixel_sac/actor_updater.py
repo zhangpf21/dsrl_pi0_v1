@@ -10,7 +10,10 @@ from jaxrl2.types import Params, PRNGKey
 
 
 def update_actor(key: PRNGKey, actor: TrainState, critic: TrainState,
-                 temp: TrainState, batch: DatasetDict, cross_norm:bool=False, critic_reduction:str='min') -> Tuple[TrainState, Dict[str, float]]:
+                 temp: TrainState, batch: DatasetDict, cross_norm:bool=False, critic_reduction:str='min',
+                 use_adapter_conditioning: bool = False, noise_dim: int = 32,
+                 adapter_feature_dim: int = 1024, adapter_gate_dim: int = 1,
+                 adapter_l2_coef: float = 1e-4, gate_l1_coef: float = 1e-4) -> Tuple[TrainState, Dict[str, float]]:
     
     key, key_act = jax.random.split(key, num=2)
 
@@ -51,11 +54,30 @@ def update_actor(key: PRNGKey, actor: TrainState, critic: TrainState,
         else:
             raise ValueError(f"Invalid critic reduction: {critic_reduction}")
         actor_loss = (log_probs * temp.apply_fn({'params': temp.params}) - q).mean()
+        adapter_l2 = jnp.array(0.0)
+        gate_l1 = jnp.array(0.0)
+        adapter_feature_norm = jnp.array(0.0)
+        adapter_gate_mean = jnp.array(0.0)
+        if use_adapter_conditioning:
+            adapter_start = noise_dim
+            adapter_end = adapter_start + adapter_feature_dim
+            gate_end = adapter_end + adapter_gate_dim
+            adapter_feature = actions[..., adapter_start:adapter_end]
+            adapter_gate = actions[..., adapter_end:gate_end]
+            adapter_l2 = jnp.mean(jnp.square(adapter_feature))
+            gate_l1 = jnp.mean(jnp.abs(adapter_gate))
+            adapter_feature_norm = jnp.linalg.norm(adapter_feature, axis=-1).mean()
+            adapter_gate_mean = adapter_gate.mean()
+            actor_loss = actor_loss + adapter_l2_coef * adapter_l2 + gate_l1_coef * gate_l1
 
         things_to_log = {
             'actor_loss': actor_loss,
             'entropy': -log_probs.mean(),
             'q_pi_in_actor': q.mean(),
+            'adapter_l2': adapter_l2,
+            'adapter_gate_l1': gate_l1,
+            'adapter_feature_norm': adapter_feature_norm,
+            'adapter_gate_mean': adapter_gate_mean,
             'mean_pi_norm': mean_dist_norm.mean(),
             'std_pi_norm': std_dist_norm.mean(),
             'mean_pi_avg': mean_dist.mean(),

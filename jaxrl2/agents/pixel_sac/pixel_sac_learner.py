@@ -29,7 +29,7 @@ from jaxrl2.agents.pixel_sac.critic_updater import update_critic
 from jaxrl2.agents.pixel_sac.temperature_updater import update_temperature
 from jaxrl2.agents.pixel_sac.temperature import Temperature
 from jaxrl2.data.dataset import DatasetDict
-from jaxrl2.networks.learned_std_normal_policy import LearnedStdTanhNormalPolicy
+from jaxrl2.networks.learned_std_normal_policy import AdapterConditionedTanhNormalPolicy, LearnedStdTanhNormalPolicy
 from jaxrl2.networks.values import StateActionEnsemble
 from jaxrl2.types import Params, PRNGKey
 from jaxrl2.utils.target_update import soft_target_update
@@ -38,12 +38,26 @@ from jaxrl2.utils.target_update import soft_target_update
 class TrainState(train_state.TrainState):
     batch_stats: Any
 
-@functools.partial(jax.jit, static_argnames=('critic_reduction', 'color_jitter',  'aug_next', 'num_cameras'))
+@functools.partial(
+    jax.jit,
+    static_argnames=(
+        'critic_reduction',
+        'color_jitter',
+        'aug_next',
+        'num_cameras',
+        'use_adapter_conditioning',
+        'noise_dim',
+        'adapter_feature_dim',
+        'adapter_gate_dim',
+    ),
+)
 def _update_jit(
     rng: PRNGKey, actor: TrainState, critic: TrainState,
     target_critic_params: Params, temp: TrainState, batch: TrainState,
     discount: float, tau: float, target_entropy: float,
     critic_reduction: str, color_jitter: bool, aug_next: bool, num_cameras: int,
+    use_adapter_conditioning: bool, noise_dim: int, adapter_feature_dim: int,
+    adapter_gate_dim: int, adapter_l2_coef: float, gate_l1_coef: float,
 ) -> Tuple[PRNGKey, TrainState, TrainState, Params, TrainState, Dict[str,float]]:
     aug_pixels = batch['observations']['pixels']
     aug_next_pixels = batch['next_observations']['pixels']
@@ -83,7 +97,20 @@ def _update_jit(
     new_target_critic_params = soft_target_update(new_critic.params, target_critic_params, tau)
     
     key, rng = jax.random.split(rng)
-    new_actor, actor_info = update_actor(key, actor, new_critic, temp, batch, critic_reduction=critic_reduction)
+    new_actor, actor_info = update_actor(
+        key,
+        actor,
+        new_critic,
+        temp,
+        batch,
+        critic_reduction=critic_reduction,
+        use_adapter_conditioning=use_adapter_conditioning,
+        noise_dim=noise_dim,
+        adapter_feature_dim=adapter_feature_dim,
+        adapter_gate_dim=adapter_gate_dim,
+        adapter_l2_coef=adapter_l2_coef,
+        gate_l1_coef=gate_l1_coef,
+    )
     new_temp, alpha_info = update_temperature(temp, actor_info['entropy'], target_entropy)
 
     return rng, new_actor, new_critic, new_target_critic_params, new_temp, {
@@ -123,7 +150,15 @@ class PixelSACLearner(Agent):
                  num_qs: int = 2,
                  target_entropy: float = None,
                  action_magnitude: float = 1.0,
-                 num_cameras: int = 1
+                 num_cameras: int = 1,
+                 use_adapter_conditioning: bool = False,
+                 noise_dim: int = 32,
+                 control_dim: int = 16,
+                 adapter_feature_dim: int = 1024,
+                 adapter_gate_dim: int = 1,
+                 adapter_hidden_dim: int = 128,
+                 adapter_l2_coef: float = 1e-4,
+                 gate_l1_coef: float = 1e-4,
                  ):
         """
         An implementation of the version of Soft-Actor-Critic described in https://arxiv.org/abs/1812.05905
@@ -139,6 +174,13 @@ class PixelSACLearner(Agent):
         self.tau = tau
         self.discount = discount
         self.critic_reduction = critic_reduction
+        self.use_adapter_conditioning = bool(use_adapter_conditioning)
+        self.noise_dim = int(noise_dim)
+        self.control_dim = int(control_dim)
+        self.adapter_feature_dim = int(adapter_feature_dim)
+        self.adapter_gate_dim = int(adapter_gate_dim)
+        self.adapter_l2_coef = adapter_l2_coef
+        self.gate_l1_coef = gate_l1_coef
 
         rng = jax.random.PRNGKey(seed)
         rng, actor_key, critic_key, temp_key = jax.random.split(rng, 4)
@@ -172,7 +214,25 @@ class PixelSACLearner(Agent):
         if len(hidden_dims) == 1:
             hidden_dims = (hidden_dims[0], hidden_dims[0], hidden_dims[0])
         
-        policy_def = LearnedStdTanhNormalPolicy(hidden_dims, self.action_dim, dropout_rate=dropout_rate, low=-action_magnitude, high=action_magnitude)
+        if self.use_adapter_conditioning:
+            packed_action_dim = self.noise_dim + self.adapter_feature_dim + self.adapter_gate_dim
+            if self.action_dim != packed_action_dim:
+                raise ValueError(
+                    f"Adapter-conditioned action dim mismatch: action space has {self.action_dim}, "
+                    f"but noise_dim + adapter_feature_dim + adapter_gate_dim = {packed_action_dim}."
+                )
+            policy_def = AdapterConditionedTanhNormalPolicy(
+                hidden_dims,
+                noise_dim=self.noise_dim,
+                control_dim=self.control_dim,
+                adapter_feature_dim=self.adapter_feature_dim,
+                gate_dim=self.adapter_gate_dim,
+                adapter_hidden_dim=adapter_hidden_dim,
+                dropout_rate=dropout_rate,
+                noise_scale=action_magnitude,
+            )
+        else:
+            policy_def = LearnedStdTanhNormalPolicy(hidden_dims, self.action_dim, dropout_rate=dropout_rate, low=-action_magnitude, high=action_magnitude)
 
         actor_def = PixelMultiplexer(encoder=encoder_def,
                                      network=policy_def,
@@ -222,7 +282,8 @@ class PixelSACLearner(Agent):
         self._target_critic_params = target_critic_params
         self._temp = temp
         if target_entropy is None or target_entropy == 'auto':
-            self.target_entropy = -self.action_dim / 2
+            entropy_dim = self.noise_dim + self.control_dim + self.adapter_gate_dim if self.use_adapter_conditioning else self.action_dim
+            self.target_entropy = -entropy_dim / 2
         else:
             self.target_entropy = float(target_entropy)
         print(f'target_entropy: {self.target_entropy}')
@@ -231,7 +292,25 @@ class PixelSACLearner(Agent):
 
     def update(self, batch: FrozenDict) -> Dict[str, float]:
         new_rng, new_actor, new_critic, new_target_critic, new_temp, info = _update_jit(
-            self._rng, self._actor, self._critic, self._target_critic_params, self._temp, batch, self.discount, self.tau, self.target_entropy, self.critic_reduction, self.color_jitter, self.aug_next, self.num_cameras
+            self._rng,
+            self._actor,
+            self._critic,
+            self._target_critic_params,
+            self._temp,
+            batch,
+            self.discount,
+            self.tau,
+            self.target_entropy,
+            self.critic_reduction,
+            self.color_jitter,
+            self.aug_next,
+            self.num_cameras,
+            self.use_adapter_conditioning,
+            self.noise_dim,
+            self.adapter_feature_dim,
+            self.adapter_gate_dim,
+            self.adapter_l2_coef,
+            self.gate_l1_coef,
             )
 
         self._rng = new_rng

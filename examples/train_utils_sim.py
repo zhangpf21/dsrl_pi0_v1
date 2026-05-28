@@ -6,6 +6,81 @@ from openpi_client import image_tools
 import math
 import PIL
 
+
+def _adapter_conditioning_enabled(variant):
+    return bool(getattr(variant, 'train_kwargs', {}).get('use_adapter_conditioning', 0))
+
+
+def _adapter_dims(variant):
+    train_kwargs = getattr(variant, 'train_kwargs', {})
+    return (
+        int(train_kwargs.get('noise_dim', 32)),
+        int(train_kwargs.get('adapter_feature_dim', 1024)),
+        int(train_kwargs.get('adapter_gate_dim', 1)),
+    )
+
+
+def _repeat_to_horizon(x, horizon):
+    x = np.asarray(x, dtype=np.float32)
+    if x.shape[0] >= horizon:
+        return x[:horizon]
+    tail = np.repeat(x[-1:, :], horizon - x.shape[0], axis=0)
+    return np.concatenate([x, tail], axis=0)
+
+
+def _split_adapter_action(packed_action, variant):
+    noise_dim, adapter_feature_dim, adapter_gate_dim = _adapter_dims(variant)
+    noise = packed_action[..., :noise_dim]
+    adapter_start = noise_dim
+    adapter_end = adapter_start + adapter_feature_dim
+    gate_end = adapter_end + adapter_gate_dim
+    return noise, packed_action[..., adapter_start:adapter_end], packed_action[..., adapter_end:gate_end]
+
+
+def _make_initial_action_and_controls(key, agent, variant, horizon):
+    if not _adapter_conditioning_enabled(variant):
+        noise = jax.random.normal(key, (1, *agent.action_chunk_shape))
+        noise_repeat = jax.numpy.repeat(noise[:, -1:, :], horizon - noise.shape[1], axis=1)
+        noise = jax.numpy.concatenate([noise, noise_repeat], axis=1)
+        return np.asarray(noise[0, :agent.action_chunk_shape[0], :]), noise, None, None
+
+    noise_dim, adapter_feature_dim, adapter_gate_dim = _adapter_dims(variant)
+    chunk_len = agent.action_chunk_shape[0]
+    noise = np.asarray(jax.random.normal(key, (chunk_len, noise_dim)), dtype=np.float32)
+    adapter_feature = np.zeros((chunk_len, adapter_feature_dim), dtype=np.float32)
+    adapter_gate = np.zeros((chunk_len, adapter_gate_dim), dtype=np.float32)
+    packed_action = np.concatenate([noise, adapter_feature, adapter_gate], axis=-1)
+    return (
+        packed_action,
+        _repeat_to_horizon(noise, horizon)[None],
+        _repeat_to_horizon(adapter_feature, horizon)[None],
+        _repeat_to_horizon(adapter_gate, horizon)[None],
+    )
+
+
+def _make_controls_from_actor_action(packed_action, variant, horizon):
+    packed_action = np.asarray(packed_action, dtype=np.float32)
+    if not _adapter_conditioning_enabled(variant):
+        noise = _repeat_to_horizon(packed_action, horizon)[None]
+        return noise, None, None
+
+    noise, adapter_feature, adapter_gate = _split_adapter_action(packed_action, variant)
+    return (
+        _repeat_to_horizon(noise, horizon)[None],
+        _repeat_to_horizon(adapter_feature, horizon)[None],
+        _repeat_to_horizon(adapter_gate, horizon)[None],
+    )
+
+
+def _infer_pi0(agent_dp, obs_pi_zero, noise, adapter_feature=None, adapter_gate=None):
+    kwargs = {}
+    if adapter_feature is not None:
+        kwargs['adapter_feature'] = np.asarray(adapter_feature, dtype=np.float32)
+    if adapter_gate is not None:
+        kwargs['adapter_gate'] = np.asarray(adapter_gate, dtype=np.float32)
+    return agent_dp.infer(obs_pi_zero, noise=np.asarray(noise, dtype=np.float32), **kwargs)
+
+
 def _quat2axisangle(quat):
     """
     Copied from robosuite: https://github.com/ARISE-Initiative/robosuite/blob/eafb81f54ffc104f905ee48a16bb15f059176ad3/robosuite/utils/transform_utils.py#L490C1-L512C55
@@ -163,7 +238,7 @@ def trajwise_alternating_training_loop(variant, agent, env, eval_env, online_rep
 def add_online_data_to_buffer(variant, traj, online_replay_buffer):
 
     discount_horizon = variant.query_freq
-    actions = np.array(traj['actions']) # (T, chunk_size, action_dim )
+    actions = np.array(traj['actions']) # (T, chunk_size, DSRL action dim)
     episode_len = len(actions)
     rewards = np.array(traj['rewards'])
     masks = np.array(traj['masks'])
@@ -230,18 +305,24 @@ def collect_traj(variant, agent, env, i, agent_dp=None):
             obs_pi_zero = obs_to_pi_zero_input(obs, variant)
             if i == 0:
                 # for initial round of data collection, we sample from standard gaussian noise
-                noise = jax.random.normal(key, (1, *agent.action_chunk_shape))
-                noise_repeat = jax.numpy.repeat(noise[:, -1:, :], 50 - noise.shape[1], axis=1)
-                noise = jax.numpy.concatenate([noise, noise_repeat], axis=1)
-                actions_noise = noise[0, :agent.action_chunk_shape[0], :]
+                actions_noise, noise, adapter_feature, adapter_gate = _make_initial_action_and_controls(
+                    key, agent, variant, horizon=50
+                )
             else:
                 # sac agent predicts the noise for diffusion model
                 actions_noise = agent.sample_actions(obs_dict)
                 actions_noise = np.reshape(actions_noise, agent.action_chunk_shape)
-                noise = np.repeat(actions_noise[-1:, :], 50 - actions_noise.shape[0], axis=0)
-                noise = jax.numpy.concatenate([actions_noise, noise], axis=0)[None]
+                noise, adapter_feature, adapter_gate = _make_controls_from_actor_action(
+                    actions_noise, variant, horizon=50
+                )
             
-            actions = agent_dp.infer(obs_pi_zero, noise=noise)["actions"]
+            actions = _infer_pi0(
+                agent_dp,
+                obs_pi_zero,
+                noise=noise,
+                adapter_feature=adapter_feature,
+                adapter_gate=adapter_gate,
+            )["actions"]
             action_list.append(actions_noise)
             obs_list.append(obs_dict)
      
@@ -342,14 +423,23 @@ def perform_control_eval(agent, env, i, variant, wandb_logger, agent_dp=None):
                 
                 if i == 0:
                     # for initial evaluation, we sample from standard gaussian noise to evaluate the base policy's performance
-                    noise = jax.random.normal(rng, (1, 50, 32))
+                    _, noise, adapter_feature, adapter_gate = _make_initial_action_and_controls(
+                        key, agent, variant, horizon=50
+                    )
                 else:
                     actions_noise = agent.sample_actions(obs_dict)
                     actions_noise = np.reshape(actions_noise, agent.action_chunk_shape)
-                    noise = np.repeat(actions_noise[-1:, :], 50 - actions_noise.shape[0], axis=0)
-                    noise = jax.numpy.concatenate([actions_noise, noise], axis=0)[None]
+                    noise, adapter_feature, adapter_gate = _make_controls_from_actor_action(
+                        actions_noise, variant, horizon=50
+                    )
                     
-                actions = agent_dp.infer(obs_pi_zero, noise=noise)["actions"]
+                actions = _infer_pi0(
+                    agent_dp,
+                    obs_pi_zero,
+                    noise=noise,
+                    adapter_feature=adapter_feature,
+                    adapter_gate=adapter_gate,
+                )["actions"]
               
             action_t = actions[t % query_frequency]
             
