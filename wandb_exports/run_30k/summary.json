@@ -1,0 +1,136 @@
+{
+  "_runtime": 4723.536388442,
+  "_step": 70000,
+  "_timestamp": 1780367352.112504,
+  "_wandb": {
+    "runtime": 4723
+  },
+  "env_steps": 20496,
+  "episode_return (exploration)": 0,
+  "eval_video/0": {
+    "_type": "video-file",
+    "height": 64,
+    "path": "media/videos/eval_video/0_70000_b5b95730004697610957.gif",
+    "sha256": "b5b957300046976109571510ee6b8b87419e5514227924904f6b6061625e2461",
+    "size": 1244713,
+    "width": 64
+  },
+  "eval_video/1": {
+    "_type": "video-file",
+    "height": 64,
+    "path": "media/videos/eval_video/1_70000_126fffaae5c655edaa44.gif",
+    "sha256": "126fffaae5c655edaa444ece5c67de7bf2e2250d482916ed0cd1e1b376c829a4",
+    "size": 1240770,
+    "width": 64
+  },
+  "eval_video/2": {
+    "_type": "video-file",
+    "height": 64,
+    "path": "media/videos/eval_video/2_70000_7708e5daa65cdf11a4a0.gif",
+    "sha256": "7708e5daa65cdf11a4a07b4b46f1b23f4ab385cf4feb472fa422f5a7559fb305",
+    "size": 1018130,
+    "width": 64
+  },
+  "eval_video/3": {
+    "_type": "video-file",
+    "height": 64,
+    "path": "media/videos/eval_video/3_70000_518d164101e2af640bb4.gif",
+    "sha256": "518d164101e2af640bb4a66d3ce0f0ec0debef803265d45a1863a3146871400c",
+    "size": 1442865,
+    "width": 64
+  },
+  "eval_video/4": {
+    "_type": "video-file",
+    "height": 64,
+    "path": "media/videos/eval_video/4_70000_42df5ef4594f6b94ce5e.gif",
+    "sha256": "42df5ef4594f6b94ce5e03a667d922f493c79a48d441c7d0f0249982c5ca525f",
+    "size": 1144878,
+    "width": 64
+  },
+  "eval_video/5": {
+    "_type": "video-file",
+    "height": 64,
+    "path": "media/videos/eval_video/5_60000_ef0a99e8b79f635a6eb4.gif",
+    "sha256": "ef0a99e8b79f635a6eb43852a9e98e44c4c68da56125f12124fd93598df45fe5",
+    "size": 1021432,
+    "width": 64
+  },
+  "eval_video/6": {
+    "_type": "video-file",
+    "height": 64,
+    "path": "media/videos/eval_video/6_60000_a295f213bc86180d6ee0.gif",
+    "sha256": "a295f213bc86180d6ee0dd69c57432e578862f5a0ae0a3afde74dd6f50ee2973",
+    "size": 1287556,
+    "width": 64
+  },
+  "eval_video/7": {
+    "_type": "video-file",
+    "height": 64,
+    "path": "media/videos/eval_video/7_60000_198948f1843b6b6344e1.gif",
+    "sha256": "198948f1843b6b6344e10b13aa446d78a553ce11ffb49675454bd32a539bdb0f",
+    "size": 1189567,
+    "width": 64
+  },
+  "eval_video/8": {
+    "_type": "video-file",
+    "height": 64,
+    "path": "media/videos/eval_video/8_60000_25af33e41fbc36eb0a6f.gif",
+    "sha256": "25af33e41fbc36eb0a6f0724a1d0baf861a6e52bb9ad5446099b2c5c085a1063",
+    "size": 1093264,
+    "width": 64
+  },
+  "eval_video/9": {
+    "_type": "video-file",
+    "height": 64,
+    "path": "media/videos/eval_video/9_60000_226793e857dc808be8e0.gif",
+    "sha256": "226793e857dc808be8e053f66c6511fea937217eb18f59821675b9bac4d0e983",
+    "size": 1126758,
+    "width": 64
+  },
+  "evaluation/Reward >= 0": 1,
+  "evaluation/Reward >= 1": 0,
+  "evaluation/avg_episode_len": 400,
+  "evaluation/avg_return": 0,
+  "evaluation/success_rate": 0,
+  "is_success (exploration)": 0,
+  "num_online_samples": 3996,
+  "num_online_trajs": 54,
+  "replay_buffer_size": 3996,
+  "reward_value_images": {
+    "_type": "image-file",
+    "format": "png",
+    "height": 3600,
+    "path": "media/images/reward_value_images_60000_f1fb5711663e5a84075f.png",
+    "sha256": "f1fb5711663e5a84075f6e44d59de7b45453ff7375301f0a726caff06a81d655",
+    "size": 379799,
+    "width": 800
+  },
+  "training/actor_loss": 3.74601149559021,
+  "training/adapter_feature_norm": 31.690689086914062,
+  "training/adapter_gate_l1": 0.6187232136726379,
+  "training/adapter_gate_mean": 0.6187232136726379,
+  "training/adapter_l2": 0.9807764291763306,
+  "training/critic_loss": 0.006912676151841879,
+  "training/entropy": -25.76722717285156,
+  "training/mean_pi_avg": -0.013729577884078026,
+  "training/mean_pi_max": 2.9908933639526367,
+  "training/mean_pi_min": -3.0049219131469727,
+  "training/mean_pi_norm": 8.461874961853027,
+  "training/next_actions_max": 1,
+  "training/next_actions_mean": 0.025852274149656296,
+  "training/next_actions_min": -1,
+  "training/next_actions_sampled": 0.025852274149656296,
+  "training/next_actions_std": 0.9839377403259276,
+  "training/next_log_probs": 25.79831314086914,
+  "training/next_q_pi": -3.654795885086059,
+  "training/q": -4.639206409454346,
+  "training/q_pi_in_actor": -3.709786891937256,
+  "training/std_pi_avg": 0.5285840034484863,
+  "training/std_pi_max": 1.0945675373077393,
+  "training/std_pi_min": 0.059339798986911774,
+  "training/std_pi_norm": 3.8676254749298096,
+  "training/target_actor_entropy": -25.79831314086914,
+  "training/target_q": -4.636558532714844,
+  "training/temperature": 0.001399619854055345,
+  "training/temperature_loss": -0.0017736363224685192
+}
