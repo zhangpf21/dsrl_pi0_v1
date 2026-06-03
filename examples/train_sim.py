@@ -25,7 +25,6 @@ from jaxrl2.utils.wandb_logger import WandBLogger, create_exp_name
 import tempfile
 from functools import partial
 from examples.train_utils_sim import trajwise_alternating_training_loop
-import tensorflow as tf
 from jax.experimental.compilation_cache import compilation_cache
 
 from openpi.training import config as openpi_config
@@ -97,9 +96,6 @@ def main(variant):
     sharding = jax.sharding.PositionalSharding(devices)
     shard_fn = partial(shard_batch, sharding=sharding)
 
-    # prevent tensorflow from using GPUs
-    tf.config.set_visible_devices([], "GPU")
-    
     kwargs = variant['train_kwargs']
     if kwargs.pop('cosine_decay', False):
         kwargs['decay_steps'] = variant.max_steps
@@ -126,6 +122,8 @@ def main(variant):
         task = task_suite.get_task(task_id)
         env, task_description = _get_libero_env(task, 256, variant.seed)
         eval_env = env
+        variant.libero_init_states = task_suite.get_task_init_states(task_id)
+        variant.libero_num_steps_wait = 10
         variant.task_description = task_description
         variant.env_max_reward = 1
         variant.max_timesteps = 400

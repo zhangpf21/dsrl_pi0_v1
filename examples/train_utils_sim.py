@@ -7,6 +7,9 @@ import math
 import PIL
 
 
+LIBERO_DUMMY_ACTION = [0.0] * 6 + [-1.0]
+
+
 def _adapter_conditioning_enabled(variant):
     return bool(getattr(variant, 'train_kwargs', {}).get('use_adapter_conditioning', 0))
 
@@ -39,22 +42,23 @@ def _split_adapter_action(packed_action, variant):
 
 def _make_initial_action_and_controls(key, agent, variant, horizon):
     if not _adapter_conditioning_enabled(variant):
-        noise = jax.random.normal(key, (1, *agent.action_chunk_shape))
-        noise_repeat = jax.numpy.repeat(noise[:, -1:, :], horizon - noise.shape[1], axis=1)
-        noise = jax.numpy.concatenate([noise, noise_repeat], axis=1)
-        return np.asarray(noise[0, :agent.action_chunk_shape[0], :]), noise, None, None
+        noise = np.asarray(jax.random.normal(key, (horizon, agent.action_chunk_shape[-1])), dtype=np.float32)
+        return noise[: agent.action_chunk_shape[0]], noise[None], None, None
 
     noise_dim, adapter_feature_dim, adapter_gate_dim = _adapter_dims(variant)
     chunk_len = agent.action_chunk_shape[0]
-    noise = np.asarray(jax.random.normal(key, (chunk_len, noise_dim)), dtype=np.float32)
-    adapter_feature = np.zeros((chunk_len, adapter_feature_dim), dtype=np.float32)
-    adapter_gate = np.zeros((chunk_len, adapter_gate_dim), dtype=np.float32)
-    packed_action = np.concatenate([noise, adapter_feature, adapter_gate], axis=-1)
+    noise = np.asarray(jax.random.normal(key, (horizon, noise_dim)), dtype=np.float32)
+    adapter_feature = np.zeros((horizon, adapter_feature_dim), dtype=np.float32)
+    adapter_gate = np.zeros((horizon, adapter_gate_dim), dtype=np.float32)
+    packed_action = np.concatenate(
+        [noise[:chunk_len], adapter_feature[:chunk_len], adapter_gate[:chunk_len]],
+        axis=-1,
+    )
     return (
         packed_action,
-        _repeat_to_horizon(noise, horizon)[None],
-        _repeat_to_horizon(adapter_feature, horizon)[None],
-        _repeat_to_horizon(adapter_gate, horizon)[None],
+        noise[None],
+        adapter_feature[None],
+        adapter_gate[None],
     )
 
 
@@ -79,6 +83,38 @@ def _infer_pi0(agent_dp, obs_pi_zero, noise, adapter_feature=None, adapter_gate=
     if adapter_gate is not None:
         kwargs['adapter_gate'] = np.asarray(adapter_gate, dtype=np.float32)
     return agent_dp.infer(obs_pi_zero, noise=np.asarray(noise, dtype=np.float32), **kwargs)
+
+
+def _print_control_stats(prefix, actions, noise, adapter_feature=None, adapter_gate=None):
+    action_arr = np.asarray(actions, dtype=np.float32)
+    noise_arr = np.asarray(noise, dtype=np.float32)
+    msg = (
+        f"{prefix} action[min={action_arr.min():.3f}, max={action_arr.max():.3f}, "
+        f"mean={action_arr.mean():.3f}] noise[std={noise_arr.std():.3f}]"
+    )
+    if adapter_feature is not None:
+        adapter_arr = np.asarray(adapter_feature, dtype=np.float32)
+        msg += f" adapter_norm={np.linalg.norm(adapter_arr, axis=-1).mean():.3f}"
+    if adapter_gate is not None:
+        gate_arr = np.asarray(adapter_gate, dtype=np.float32)
+        msg += f" gate_mean={gate_arr.mean():.3f}"
+    print(msg)
+
+
+def _reset_libero_env(env, variant, episode_id):
+    env.reset()
+    init_states = getattr(variant, 'libero_init_states', None)
+    if init_states is not None and len(init_states) > 0:
+        obs = env.set_init_state(init_states[episode_id % len(init_states)])
+    else:
+        obs = env.reset()
+
+    wait_steps = int(getattr(variant, 'libero_num_steps_wait', 0))
+    for _ in range(wait_steps):
+        obs, _, done, _ = env.step(LIBERO_DUMMY_ACTION)
+        if done:
+            break
+    return obs, wait_steps
 
 
 def _quat2axisangle(quat):
@@ -273,9 +309,12 @@ def collect_traj(variant, agent, env, i, agent_dp=None):
     agent._rng, rng = jax.random.split(agent._rng)
     
     if 'libero' in variant.env:
-        obs = env.reset()
+        episode_id = int(getattr(variant, '_collect_episode_id', 0))
+        variant._collect_episode_id = episode_id + 1
+        obs, warmup_steps = _reset_libero_env(env, variant, episode_id)
     elif 'aloha' in variant.env:
         obs, _ = env.reset()
+        warmup_steps = 0
     
     image_list = [] # for visualization
     rewards = []
@@ -323,6 +362,8 @@ def collect_traj(variant, agent, env, i, agent_dp=None):
                 adapter_feature=adapter_feature,
                 adapter_gate=adapter_gate,
             )["actions"]
+            if t == 0:
+                _print_control_stats("collect", actions, noise, adapter_feature, adapter_gate)
             action_list.append(actions_noise)
             obs_list.append(obs_dict)
      
@@ -375,7 +416,7 @@ def collect_traj(variant, agent, env, i, agent_dp=None):
         'is_success': is_success,
         'episode_return': episode_return,
         'images': image_list,
-        'env_steps': t + 1 
+        'env_steps': warmup_steps + t + 1 
     }
 
 def perform_control_eval(agent, env, i, variant, wandb_logger, agent_dp=None):
@@ -392,7 +433,7 @@ def perform_control_eval(agent, env, i, variant, wandb_logger, agent_dp=None):
 
     for rollout_id in range(variant.eval_episodes):
         if 'libero' in variant.env:
-            obs = env.reset()
+            obs, _ = _reset_libero_env(env, variant, rollout_id)
         elif 'aloha' in variant.env:
             obs, _ = env.reset()
             
@@ -427,7 +468,7 @@ def perform_control_eval(agent, env, i, variant, wandb_logger, agent_dp=None):
                         key, agent, variant, horizon=50
                     )
                 else:
-                    actions_noise = agent.sample_actions(obs_dict)
+                    actions_noise = agent.eval_actions(obs_dict)
                     actions_noise = np.reshape(actions_noise, agent.action_chunk_shape)
                     noise, adapter_feature, adapter_gate = _make_controls_from_actor_action(
                         actions_noise, variant, horizon=50
@@ -440,6 +481,8 @@ def perform_control_eval(agent, env, i, variant, wandb_logger, agent_dp=None):
                     adapter_feature=adapter_feature,
                     adapter_gate=adapter_gate,
                 )["actions"]
+                if t == 0:
+                    _print_control_stats(f"eval/{rollout_id}", actions, noise, adapter_feature, adapter_gate)
               
             action_t = actions[t % query_frequency]
             

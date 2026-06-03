@@ -32,11 +32,11 @@ python3 -m examples.launch_train_sim \
 --eval_interval 10000 \
 --log_interval 500 \
 --eval_episodes 10 \
---multi_grad_step 20 \
---start_online_updates 500 \
+--multi_grad_step 5 \
+--start_online_updates 2000 \
 --resize_image 64 \
 --action_magnitude 1.0 \
---query_freq 20 \
+--query_freq 5 \
 --hidden_dims 128 \
 --use_adapter_conditioning 1 \
 --noise_dim 32 \
@@ -44,5 +44,6 @@ python3 -m examples.launch_train_sim \
 --adapter_feature_dim 1024 \
 --adapter_gate_dim 1 \
 --adapter_hidden_dim 128 \
---adapter_l2_coef 1e-4 \
---gate_l1_coef 1e-4 \
+--actor_lr 3e-5 \
+--adapter_l2_coef 1e-3 \
+--gate_l1_coef 1e-3

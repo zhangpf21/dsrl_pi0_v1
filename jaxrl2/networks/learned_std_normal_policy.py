@@ -114,6 +114,8 @@ class AdapterConditionedDistribution:
         adapter_feature_dim: int,
         gate_dim: int,
         noise_scale: float = 1.0,
+        gate_logit_scale: float = 5.0,
+        gate_logit_bias: float = -2.5,
     ):
         self.latent_distribution = latent_distribution
         self.distribution = latent_distribution.distribution
@@ -122,6 +124,8 @@ class AdapterConditionedDistribution:
         self.adapter_feature_dim = adapter_feature_dim
         self.gate_dim = gate_dim
         self.noise_scale = noise_scale
+        self.gate_logit_scale = gate_logit_scale
+        self.gate_logit_bias = gate_logit_bias
         self._adapter_fn = adapter_fn
 
     def _pack(self, latent_action: jnp.ndarray) -> jnp.ndarray:
@@ -131,8 +135,9 @@ class AdapterConditionedDistribution:
 
         noise = latent_action[..., :noise_end] * self.noise_scale
         control_code = latent_action[..., noise_end:control_end]
-        gate_raw = latent_action[..., control_end:gate_end]
-        gate = 1.0 / (1.0 + jnp.exp(-gate_raw))
+        gate_code = latent_action[..., control_end:gate_end]
+        gate_logits = self.gate_logit_scale * gate_code + self.gate_logit_bias
+        gate = 1.0 / (1.0 + jnp.exp(-gate_logits))
         adapter_feature = self._adapter_fn(control_code)
         return jnp.concatenate([noise, adapter_feature, gate], axis=-1)
 
@@ -159,9 +164,11 @@ class AdapterConditionedDistribution:
         noise = actions[..., :self.noise_dim] / self.noise_scale
         gate = actions[..., self.noise_dim + self.adapter_feature_dim : self.noise_dim + self.adapter_feature_dim + self.gate_dim]
         gate = jnp.clip(gate, 1e-6, 1.0 - 1e-6)
-        gate_raw = jnp.log(gate) - jnp.log1p(-gate)
+        gate_logits = jnp.log(gate) - jnp.log1p(-gate)
+        gate_code = (gate_logits - self.gate_logit_bias) / self.gate_logit_scale
+        gate_code = jnp.clip(gate_code, -1.0 + 1e-6, 1.0 - 1e-6)
         control_code = jnp.zeros((*noise.shape[:-1], self.control_dim), dtype=actions.dtype)
-        latent_action = jnp.concatenate([noise, control_code, gate_raw], axis=-1)
+        latent_action = jnp.concatenate([noise, control_code, gate_code], axis=-1)
         return self.latent_distribution.log_prob(latent_action)
 
 
@@ -176,7 +183,8 @@ class AdapterConditionedTanhNormalPolicy(nn.Module):
     log_std_min: Optional[float] = -20
     log_std_max: Optional[float] = 2
     noise_scale: float = 1.0
-    adapter_init_scale: float = 1e-3
+    gate_logit_scale: float = 5.0
+    gate_logit_bias: float = -2.5
 
     @nn.compact
     def __call__(
@@ -210,7 +218,7 @@ class AdapterConditionedTanhNormalPolicy(nn.Module):
         )
         adapter_w2 = self.param(
             "adapter_fc2_kernel",
-            default_init(self.adapter_init_scale),
+            nn.initializers.zeros,
             (self.adapter_hidden_dim, self.adapter_feature_dim),
         )
         adapter_b2 = self.param(
@@ -222,7 +230,7 @@ class AdapterConditionedTanhNormalPolicy(nn.Module):
         def adapter_fn(control_code: jnp.ndarray) -> jnp.ndarray:
             x = jnp.matmul(control_code, adapter_w1) + adapter_b1
             x = nn.relu(x)
-            return jnp.matmul(x, adapter_w2) + adapter_b2
+            return jnp.tanh(jnp.matmul(x, adapter_w2) + adapter_b2)
 
         return AdapterConditionedDistribution(
             latent_distribution,
@@ -232,4 +240,6 @@ class AdapterConditionedTanhNormalPolicy(nn.Module):
             adapter_feature_dim=self.adapter_feature_dim,
             gate_dim=self.gate_dim,
             noise_scale=self.noise_scale,
+            gate_logit_scale=self.gate_logit_scale,
+            gate_logit_bias=self.gate_logit_bias,
         )
