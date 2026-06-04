@@ -28,7 +28,7 @@ def _dsrl_action_dim(variant):
     if train_kwargs.get('use_adapter_conditioning', 0):
         return (
             int(train_kwargs.get('noise_dim', 32))
-            + int(train_kwargs.get('adapter_feature_dim', 1024))
+            + int(train_kwargs.get('control_dim', 16))
             + int(train_kwargs.get('adapter_gate_dim', 1))
         )
     return 32

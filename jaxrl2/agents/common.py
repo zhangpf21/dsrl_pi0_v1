@@ -98,6 +98,22 @@ def sample_actions_jit(
     return rng, dist.sample(seed=key)
 
 
+@partial(jax.jit, static_argnames='actor_apply_fn')
+def pack_actions_jit(actor_apply_fn: Callable[..., distrax.Distribution],
+                     actor_params: Params,
+                     observations: np.ndarray,
+                     actions: np.ndarray,
+                     actor_batch_stats: Any) -> jnp.ndarray:
+    input_collections = {'params': actor_params}
+    if actor_batch_stats is not None:
+        input_collections['batch_stats'] = actor_batch_stats
+    dist = actor_apply_fn(input_collections, observations, training=False,
+                          mutable=False)
+    if hasattr(dist, 'pack'):
+        return dist.pack(actions)
+    return actions
+
+
 class ModuleDict(nn.Module):
     """
     from https://github.com/rail-berkeley/jaxrl_minimal/blob/main/jaxrl_m/common/common.py#L33

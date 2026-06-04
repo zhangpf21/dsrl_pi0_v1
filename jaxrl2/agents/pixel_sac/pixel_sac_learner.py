@@ -157,6 +157,8 @@ class PixelSACLearner(Agent):
                  adapter_feature_dim: int = 1024,
                  adapter_gate_dim: int = 1,
                  adapter_hidden_dim: int = 128,
+                 adapter_feature_scale: float = 0.25,
+                 adapter_gate_max: float = 0.2,
                  adapter_l2_coef: float = 1e-4,
                  gate_l1_coef: float = 1e-4,
                  ):
@@ -181,6 +183,8 @@ class PixelSACLearner(Agent):
         self.adapter_gate_dim = int(adapter_gate_dim)
         self.adapter_l2_coef = adapter_l2_coef
         self.gate_l1_coef = gate_l1_coef
+        self.adapter_feature_scale = float(adapter_feature_scale)
+        self.adapter_gate_max = float(adapter_gate_max)
 
         rng = jax.random.PRNGKey(seed)
         rng, actor_key, critic_key, temp_key = jax.random.split(rng, 4)
@@ -215,11 +219,11 @@ class PixelSACLearner(Agent):
             hidden_dims = (hidden_dims[0], hidden_dims[0], hidden_dims[0])
         
         if self.use_adapter_conditioning:
-            packed_action_dim = self.noise_dim + self.adapter_feature_dim + self.adapter_gate_dim
-            if self.action_dim != packed_action_dim:
+            latent_action_dim = self.noise_dim + self.control_dim + self.adapter_gate_dim
+            if self.action_dim != latent_action_dim:
                 raise ValueError(
                     f"Adapter-conditioned action dim mismatch: action space has {self.action_dim}, "
-                    f"but noise_dim + adapter_feature_dim + adapter_gate_dim = {packed_action_dim}."
+                    f"but noise_dim + control_dim + adapter_gate_dim = {latent_action_dim}."
                 )
             policy_def = AdapterConditionedTanhNormalPolicy(
                 hidden_dims,
@@ -230,6 +234,8 @@ class PixelSACLearner(Agent):
                 adapter_hidden_dim=adapter_hidden_dim,
                 dropout_rate=dropout_rate,
                 noise_scale=action_magnitude,
+                adapter_feature_scale=self.adapter_feature_scale,
+                gate_max=self.adapter_gate_max,
             )
         else:
             policy_def = LearnedStdTanhNormalPolicy(hidden_dims, self.action_dim, dropout_rate=dropout_rate, low=-action_magnitude, high=action_magnitude)

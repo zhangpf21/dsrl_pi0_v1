@@ -37,7 +37,7 @@ if __name__ == '__main__':
         latent_dim= 50,
         discount= 0.999,
         tau= 0.005,
-        critic_reduction = 'mean',
+        critic_reduction = 'min',
         dropout_rate=0.0,
         aug_next=1,
         use_bottleneck=True,
@@ -55,6 +55,8 @@ if __name__ == '__main__':
         adapter_feature_dim=1024,
         adapter_gate_dim=1,
         adapter_hidden_dim=128,
+        adapter_feature_scale=0.25,
+        adapter_gate_max=0.2,
         adapter_l2_coef=1e-4,
         gate_l1_coef=1e-4,
         )

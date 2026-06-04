@@ -20,6 +20,7 @@ def _adapter_dims(variant):
     train_kwargs = getattr(variant, 'train_kwargs', {})
     return (
         int(train_kwargs.get('noise_dim', 32)),
+        int(train_kwargs.get('control_dim', 16)),
         int(train_kwargs.get('adapter_feature_dim', 1024)),
         int(train_kwargs.get('adapter_gate_dim', 1)),
     )
@@ -34,7 +35,7 @@ def _repeat_to_horizon(x, horizon):
 
 
 def _split_adapter_action(packed_action, variant):
-    noise_dim, adapter_feature_dim, adapter_gate_dim = _adapter_dims(variant)
+    noise_dim, _, adapter_feature_dim, adapter_gate_dim = _adapter_dims(variant)
     noise = packed_action[..., :noise_dim]
     adapter_start = noise_dim
     adapter_end = adapter_start + adapter_feature_dim
@@ -49,17 +50,19 @@ def _make_initial_action_and_controls(key, agent, variant, horizon):
         noise = jax.numpy.concatenate([noise, noise_repeat], axis=1)
         return np.asarray(noise[0, :agent.action_chunk_shape[0], :]), noise, None, None
 
-    noise_dim, adapter_feature_dim, adapter_gate_dim = _adapter_dims(variant)
+    noise_dim, control_dim, adapter_feature_dim, adapter_gate_dim = _adapter_dims(variant)
     chunk_len = agent.action_chunk_shape[0]
     noise = np.asarray(jax.random.normal(key, (chunk_len, noise_dim)), dtype=np.float32)
-    adapter_feature = np.zeros((chunk_len, adapter_feature_dim), dtype=np.float32)
-    adapter_gate = np.zeros((chunk_len, adapter_gate_dim), dtype=np.float32)
-    packed_action = np.concatenate([noise, adapter_feature, adapter_gate], axis=-1)
+    control_code = np.zeros((chunk_len, control_dim), dtype=np.float32)
+    gate_code = -np.ones((chunk_len, adapter_gate_dim), dtype=np.float32)
+    adapter_feature = np.zeros((horizon, adapter_feature_dim), dtype=np.float32)
+    adapter_gate = np.zeros((horizon, adapter_gate_dim), dtype=np.float32)
+    latent_action = np.concatenate([noise, control_code, gate_code], axis=-1)
     return (
-        packed_action,
+        latent_action,
         _repeat_to_horizon(noise, horizon)[None],
-        _repeat_to_horizon(adapter_feature, horizon)[None],
-        _repeat_to_horizon(adapter_gate, horizon)[None],
+        adapter_feature[None],
+        adapter_gate[None],
     )
 
 
@@ -243,11 +246,13 @@ def collect_traj(variant, agent, env, i, agent_dp=None, wandb_logger=None, traj_
                         key, agent, variant, horizon=10
                     )
                 else:
-                    # sac agent predicts the noise for diffusion model
+                    # SAC predicts the low-dimensional latent action; pack it only for pi0 execution.
                     actions_noise = agent.sample_actions(obs_dict)
                     actions_noise = np.reshape(actions_noise, agent.action_chunk_shape)
+                    packed_action = agent.pack_actions(obs_dict, actions_noise)
+                    packed_action = np.reshape(packed_action, (agent.action_chunk_shape[0], -1))
                     noise, adapter_feature, adapter_gate = _make_controls_from_actor_action(
-                        actions_noise, variant, horizon=10
+                        packed_action, variant, horizon=10
                     )
                 action_list.append(actions_noise)
                 obs_list.append(obs_dict)

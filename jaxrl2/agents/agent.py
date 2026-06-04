@@ -5,7 +5,7 @@ import pathlib
 from flax.training.train_state import TrainState
 
 from jaxrl2.agents.common import (eval_actions_jit, eval_log_prob_jit, eval_mse_jit, eval_reward_function_jit,
-                                  sample_actions_jit)
+                                  pack_actions_jit, sample_actions_jit)
 from jaxrl2.data.dataset import DatasetDict
 from jaxrl2.types import PRNGKey
 
@@ -45,6 +45,16 @@ class Agent(object):
         self._rng = rng
         return np.asarray(actions)
 
+    def pack_actions(self, observations: np.ndarray, actions: np.ndarray) -> np.ndarray:
+        packed_actions = pack_actions_jit(
+            self._actor.apply_fn,
+            self._actor.params,
+            observations,
+            actions,
+            get_batch_stats(self._actor),
+        )
+        return np.asarray(packed_actions)
+
     @property
     def _save_dict(self):
         return None
@@ -54,5 +64,4 @@ class Agent(object):
 
     def restore_checkpoint(self, dir):
         raise NotImplementedError
-
 

@@ -62,8 +62,9 @@ def update_actor(key: PRNGKey, actor: TrainState, critic: TrainState,
             adapter_start = noise_dim
             adapter_end = adapter_start + adapter_feature_dim
             gate_end = adapter_end + adapter_gate_dim
-            adapter_feature = actions[..., adapter_start:adapter_end]
-            adapter_gate = actions[..., adapter_end:gate_end]
+            packed_actions = dist.pack(actions)
+            adapter_feature = packed_actions[..., adapter_start:adapter_end]
+            adapter_gate = packed_actions[..., adapter_end:gate_end]
             adapter_l2 = jnp.mean(jnp.square(adapter_feature))
             gate_l1 = jnp.mean(jnp.abs(adapter_gate))
             adapter_feature_norm = jnp.linalg.norm(adapter_feature, axis=-1).mean()

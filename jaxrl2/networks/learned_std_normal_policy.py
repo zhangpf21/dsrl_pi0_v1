@@ -116,6 +116,7 @@ class AdapterConditionedDistribution:
         noise_scale: float = 1.0,
         gate_logit_scale: float = 5.0,
         gate_logit_bias: float = -2.5,
+        gate_max: float = 0.2,
     ):
         self.latent_distribution = latent_distribution
         self.distribution = latent_distribution.distribution
@@ -126,6 +127,7 @@ class AdapterConditionedDistribution:
         self.noise_scale = noise_scale
         self.gate_logit_scale = gate_logit_scale
         self.gate_logit_bias = gate_logit_bias
+        self.gate_max = gate_max
         self._adapter_fn = adapter_fn
 
     def _pack(self, latent_action: jnp.ndarray) -> jnp.ndarray:
@@ -137,39 +139,30 @@ class AdapterConditionedDistribution:
         control_code = latent_action[..., noise_end:control_end]
         gate_code = latent_action[..., control_end:gate_end]
         gate_logits = self.gate_logit_scale * gate_code + self.gate_logit_bias
-        gate = 1.0 / (1.0 + jnp.exp(-gate_logits))
+        gate = self.gate_max / (1.0 + jnp.exp(-gate_logits))
         adapter_feature = self._adapter_fn(control_code)
         return jnp.concatenate([noise, adapter_feature, gate], axis=-1)
 
     def sample(self, seed: jnp.ndarray, sample_shape=()) -> jnp.ndarray:
-        return self._pack(self.latent_distribution.sample(seed=seed, sample_shape=sample_shape))
+        return self.latent_distribution.sample(seed=seed, sample_shape=sample_shape)
 
     def sample_and_log_prob(self, seed: jnp.ndarray, sample_shape=()):
-        latent_action, log_prob = self.latent_distribution.sample_and_log_prob(seed=seed, sample_shape=sample_shape)
-        return self._pack(latent_action), log_prob
+        return self.latent_distribution.sample_and_log_prob(seed=seed, sample_shape=sample_shape)
 
     def mode(self) -> jnp.ndarray:
-        return self._pack(self.latent_distribution.mode())
+        return self.latent_distribution.mode()
 
     @property
     def loc(self) -> jnp.ndarray:
         return self.mode()
 
+    def pack(self, latent_action: jnp.ndarray) -> jnp.ndarray:
+        return self._pack(latent_action)
+
     def log_prob(self, actions: jnp.ndarray) -> jnp.ndarray:
-        # This is only used by auxiliary eval helpers. The adapter map is
-        # many-to-one, so we cannot invert adapter_feature back to control_code.
-        # Use zero control_code and the stored gate for a coarse diagnostic logp.
         if actions.ndim > 2:
             actions = jnp.reshape(actions, (*actions.shape[:-2], actions.shape[-2] * actions.shape[-1]))
-        noise = actions[..., :self.noise_dim] / self.noise_scale
-        gate = actions[..., self.noise_dim + self.adapter_feature_dim : self.noise_dim + self.adapter_feature_dim + self.gate_dim]
-        gate = jnp.clip(gate, 1e-6, 1.0 - 1e-6)
-        gate_logits = jnp.log(gate) - jnp.log1p(-gate)
-        gate_code = (gate_logits - self.gate_logit_bias) / self.gate_logit_scale
-        gate_code = jnp.clip(gate_code, -1.0 + 1e-6, 1.0 - 1e-6)
-        control_code = jnp.zeros((*noise.shape[:-1], self.control_dim), dtype=actions.dtype)
-        latent_action = jnp.concatenate([noise, control_code, gate_code], axis=-1)
-        return self.latent_distribution.log_prob(latent_action)
+        return self.latent_distribution.log_prob(actions)
 
 
 class AdapterConditionedTanhNormalPolicy(nn.Module):
@@ -185,6 +178,8 @@ class AdapterConditionedTanhNormalPolicy(nn.Module):
     noise_scale: float = 1.0
     gate_logit_scale: float = 5.0
     gate_logit_bias: float = -2.5
+    adapter_feature_scale: float = 0.25
+    gate_max: float = 0.2
 
     @nn.compact
     def __call__(
@@ -230,7 +225,7 @@ class AdapterConditionedTanhNormalPolicy(nn.Module):
         def adapter_fn(control_code: jnp.ndarray) -> jnp.ndarray:
             x = jnp.matmul(control_code, adapter_w1) + adapter_b1
             x = nn.relu(x)
-            return jnp.tanh(jnp.matmul(x, adapter_w2) + adapter_b2)
+            return self.adapter_feature_scale * jnp.tanh(jnp.matmul(x, adapter_w2) + adapter_b2)
 
         return AdapterConditionedDistribution(
             latent_distribution,
@@ -242,4 +237,5 @@ class AdapterConditionedTanhNormalPolicy(nn.Module):
             noise_scale=self.noise_scale,
             gate_logit_scale=self.gate_logit_scale,
             gate_logit_bias=self.gate_logit_bias,
+            gate_max=self.gate_max,
         )
