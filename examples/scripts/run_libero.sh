@@ -28,10 +28,11 @@ python3 -m examples.launch_train_sim \
 --batch_size 256 \
 --discount 0.999 \
 --seed 0 \
---max_steps 100000  \
+--max_steps 200000  \
 --eval_interval 10000 \
 --log_interval 500 \
---eval_episodes 10 \
+--eval_episodes 50 \
+--eval_video_episodes 0 \
 --multi_grad_step 10 \
 --start_online_updates 1000 \
 --resize_image 64 \
@@ -49,4 +50,4 @@ python3 -m examples.launch_train_sim \
 --actor_lr 3e-5 \
 --critic_reduction min \
 --adapter_l2_coef 5e-3 \
---gate_l1_coef 5e-3
+--gate_l1_coef 1e-3

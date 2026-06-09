@@ -40,12 +40,13 @@ def update_actor(key: PRNGKey, actor: TrainState, critic: TrainState,
 
         
         actions, log_probs = dist.sample_and_log_prob(seed=key_act)
+        critic_actions = dist.critic_action(actions) if use_adapter_conditioning else actions
 
         if hasattr(critic, 'batch_stats') and critic.batch_stats is not None:
             qs, _ = critic.apply_fn({'params': critic.params, 'batch_stats': critic.batch_stats}, batch['observations'],
-                            actions, mutable=['batch_stats'])
+                            critic_actions, mutable=['batch_stats'])
         else:    
-            qs = critic.apply_fn({'params': critic.params}, batch['observations'], actions)
+            qs = critic.apply_fn({'params': critic.params}, batch['observations'], critic_actions)
         
         if critic_reduction == 'min':
             q = qs.min(axis=0)

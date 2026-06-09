@@ -10,6 +10,8 @@ if __name__ == '__main__':
     parser.add_argument('--seed', default=42, help='Random seed.', type=int)
     parser.add_argument('--launch_group_id', default='', help='group id used to group runs on wandb.')
     parser.add_argument('--eval_episodes', default=10,help='Number of episodes used for evaluation.', type=int)
+    parser.add_argument('--eval_video_episodes', default=-1, help='Number of eval videos to log; -1 logs all.', type=int)
+    parser.add_argument('--eval_max_timesteps', default=-1, help='Max eval horizon; -1 uses env default.', type=int)
     parser.add_argument('--env', default='libero', help='name of environment')
     parser.add_argument('--log_interval', default=1000, help='Logging interval.', type=int)
     parser.add_argument('--eval_interval', default=5000, help='Eval interval.', type=int)

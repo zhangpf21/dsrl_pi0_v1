@@ -159,6 +159,25 @@ class AdapterConditionedDistribution:
     def pack(self, latent_action: jnp.ndarray) -> jnp.ndarray:
         return self._pack(latent_action)
 
+    def critic_action(self, latent_action: jnp.ndarray) -> jnp.ndarray:
+        packed_action = self._pack(latent_action)
+        noise = packed_action[..., :self.noise_dim]
+        adapter_start = self.noise_dim
+        adapter_end = adapter_start + self.adapter_feature_dim
+        adapter_feature = packed_action[..., adapter_start:adapter_end]
+        gate = packed_action[..., adapter_end : adapter_end + self.gate_dim]
+        if self.adapter_feature_dim % self.control_dim != 0:
+            raise ValueError(
+                f"adapter_feature_dim {self.adapter_feature_dim} must be divisible by "
+                f"control_dim {self.control_dim}."
+            )
+        group_size = self.adapter_feature_dim // self.control_dim
+        adapter_summary = jnp.reshape(
+            adapter_feature,
+            (*adapter_feature.shape[:-1], self.control_dim, group_size),
+        ).mean(axis=-1)
+        return jnp.concatenate([noise, adapter_summary, gate], axis=-1)
+
     def log_prob(self, actions: jnp.ndarray) -> jnp.ndarray:
         if actions.ndim > 2:
             actions = jnp.reshape(actions, (*actions.shape[:-2], actions.shape[-2] * actions.shape[-1]))

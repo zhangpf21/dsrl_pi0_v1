@@ -49,16 +49,16 @@ def _make_initial_action_and_controls(key, agent, variant, horizon):
     noise_dim, control_dim, adapter_feature_dim, adapter_gate_dim = _adapter_dims(variant)
     chunk_len = agent.action_chunk_shape[0]
     noise = np.asarray(jax.random.normal(key, (horizon, noise_dim)), dtype=np.float32)
-    control_code = np.zeros((chunk_len, control_dim), dtype=np.float32)
-    gate_code = -np.ones((chunk_len, adapter_gate_dim), dtype=np.float32)
+    adapter_summary = np.zeros((chunk_len, control_dim), dtype=np.float32)
+    critic_gate = np.zeros((chunk_len, adapter_gate_dim), dtype=np.float32)
     adapter_feature = np.zeros((horizon, adapter_feature_dim), dtype=np.float32)
     adapter_gate = np.zeros((horizon, adapter_gate_dim), dtype=np.float32)
-    latent_action = np.concatenate(
-        [noise[:chunk_len], control_code, gate_code],
+    critic_action = np.concatenate(
+        [noise[:chunk_len], adapter_summary, critic_gate],
         axis=-1,
     )
     return (
-        latent_action,
+        critic_action,
         noise[None],
         adapter_feature[None],
         adapter_gate[None],
@@ -356,6 +356,8 @@ def collect_traj(variant, agent, env, i, agent_dp=None):
                 actions_noise = np.reshape(actions_noise, agent.action_chunk_shape)
                 packed_action = agent.pack_actions(obs_dict, actions_noise)
                 packed_action = np.reshape(packed_action, (agent.action_chunk_shape[0], -1))
+                critic_action = agent.critic_actions(obs_dict, actions_noise)
+                critic_action = np.reshape(critic_action, agent.action_chunk_shape)
                 noise, adapter_feature, adapter_gate = _make_controls_from_actor_action(
                     packed_action, variant, horizon=50
                 )
@@ -369,7 +371,7 @@ def collect_traj(variant, agent, env, i, agent_dp=None):
             )["actions"]
             if t == 0:
                 _print_control_stats("collect", actions, noise, adapter_feature, adapter_gate)
-            action_list.append(actions_noise)
+            action_list.append(actions_noise if i == 0 else critic_action)
             obs_list.append(obs_dict)
      
         action_t = actions[t % query_frequency]
@@ -427,7 +429,9 @@ def collect_traj(variant, agent, env, i, agent_dp=None):
 def perform_control_eval(agent, env, i, variant, wandb_logger, agent_dp=None):
     query_frequency = variant.query_freq
     print('query frequency', query_frequency)
-    max_timesteps = variant.max_timesteps
+    eval_max_timesteps = int(getattr(variant, 'eval_max_timesteps', -1))
+    max_timesteps = eval_max_timesteps if eval_max_timesteps > 0 else variant.max_timesteps
+    eval_video_episodes = int(getattr(variant, 'eval_video_episodes', -1))
     env_max_reward = variant.env_max_reward
     episode_returns = []
     highest_rewards = []
@@ -515,8 +519,9 @@ def perform_control_eval(agent, env, i, variant, wandb_logger, agent_dp=None):
         success_rates.append(is_success)
                 
         print(f'Rollout {rollout_id} : {episode_return=}, Success: {is_success}')
-        video = np.stack(image_list).transpose(0, 3, 1, 2)
-        wandb_logger.log({f'eval_video/{rollout_id}': wandb.Video(video, fps=50)}, step=i)
+        if eval_video_episodes < 0 or rollout_id < eval_video_episodes:
+            video = np.stack(image_list).transpose(0, 3, 1, 2)
+            wandb_logger.log({f'eval_video/{rollout_id}': wandb.Video(video, fps=50)}, step=i)
 
 
     success_rate = np.mean(np.array(success_rates))

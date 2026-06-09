@@ -53,13 +53,13 @@ def _make_initial_action_and_controls(key, agent, variant, horizon):
     noise_dim, control_dim, adapter_feature_dim, adapter_gate_dim = _adapter_dims(variant)
     chunk_len = agent.action_chunk_shape[0]
     noise = np.asarray(jax.random.normal(key, (chunk_len, noise_dim)), dtype=np.float32)
-    control_code = np.zeros((chunk_len, control_dim), dtype=np.float32)
-    gate_code = -np.ones((chunk_len, adapter_gate_dim), dtype=np.float32)
+    adapter_summary = np.zeros((chunk_len, control_dim), dtype=np.float32)
+    critic_gate = np.zeros((chunk_len, adapter_gate_dim), dtype=np.float32)
     adapter_feature = np.zeros((horizon, adapter_feature_dim), dtype=np.float32)
     adapter_gate = np.zeros((horizon, adapter_gate_dim), dtype=np.float32)
-    latent_action = np.concatenate([noise, control_code, gate_code], axis=-1)
+    critic_action = np.concatenate([noise, adapter_summary, critic_gate], axis=-1)
     return (
-        latent_action,
+        critic_action,
         _repeat_to_horizon(noise, horizon)[None],
         adapter_feature[None],
         adapter_gate[None],
@@ -251,10 +251,12 @@ def collect_traj(variant, agent, env, i, agent_dp=None, wandb_logger=None, traj_
                     actions_noise = np.reshape(actions_noise, agent.action_chunk_shape)
                     packed_action = agent.pack_actions(obs_dict, actions_noise)
                     packed_action = np.reshape(packed_action, (agent.action_chunk_shape[0], -1))
+                    critic_action = agent.critic_actions(obs_dict, actions_noise)
+                    critic_action = np.reshape(critic_action, agent.action_chunk_shape)
                     noise, adapter_feature, adapter_gate = _make_controls_from_actor_action(
                         packed_action, variant, horizon=10
                     )
-                action_list.append(actions_noise)
+                action_list.append(actions_noise if i == 0 else critic_action)
                 obs_list.append(obs_dict)
                 action = _infer_pi0(
                     agent_dp,

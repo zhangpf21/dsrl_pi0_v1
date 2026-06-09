@@ -15,8 +15,9 @@ def update_critic(
         critic_reduction: str = 'min') -> Tuple[TrainState, Dict[str, float]]:
     dist = actor.apply_fn({'params': actor.params}, batch['next_observations'])
     next_actions, next_log_probs = dist.sample_and_log_prob(seed=key)
+    next_critic_actions = dist.critic_action(next_actions) if hasattr(dist, 'critic_action') else next_actions
     next_qs = target_critic.apply_fn({'params': target_critic.params},
-                                     batch['next_observations'], next_actions)
+                                     batch['next_observations'], next_critic_actions)
     if critic_reduction == 'min':
         next_q = next_qs.min(axis=0)
     elif critic_reduction == 'mean':
@@ -39,14 +40,14 @@ def update_critic(
             'critic_loss': critic_loss,
             'q': qs.mean(),
             'target_actor_entropy': -next_log_probs.mean(),
-            'next_actions_sampled': next_actions.mean(),
+            'next_actions_sampled': next_critic_actions.mean(),
             'next_log_probs': next_log_probs.mean(),
             'next_q_pi': next_qs.mean(),
             'target_q': target_q.mean(),
-            'next_actions_mean': next_actions.mean(),
-            'next_actions_std': next_actions.std(),
-            'next_actions_min': next_actions.min(),
-            'next_actions_max': next_actions.max(),
+            'next_actions_mean': next_critic_actions.mean(),
+            'next_actions_std': next_critic_actions.std(),
+            'next_actions_min': next_critic_actions.min(),
+            'next_actions_max': next_critic_actions.max(),
             'next_log_probs': next_log_probs.mean(),
             
         }
