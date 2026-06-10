@@ -33,11 +33,12 @@ python3 -m examples.launch_train_sim \
 --log_interval 500 \
 --eval_episodes 50 \
 --eval_video_episodes 0 \
+--adapter_action_diff_episodes 3 \
 --multi_grad_step 10 \
 --start_online_updates 1000 \
 --resize_image 64 \
 --action_magnitude 1.0 \
---query_freq 10 \
+--query_freq 20 \
 --hidden_dims 128 \
 --use_adapter_conditioning 1 \
 --noise_dim 32 \

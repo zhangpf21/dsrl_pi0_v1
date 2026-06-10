@@ -12,6 +12,7 @@ if __name__ == '__main__':
     parser.add_argument('--eval_episodes', default=10,help='Number of episodes used for evaluation.', type=int)
     parser.add_argument('--eval_video_episodes', default=-1, help='Number of eval videos to log; -1 logs all.', type=int)
     parser.add_argument('--eval_max_timesteps', default=-1, help='Max eval horizon; -1 uses env default.', type=int)
+    parser.add_argument('--adapter_action_diff_episodes', default=0, help='Number of eval episodes used to measure adapter action impact.', type=int)
     parser.add_argument('--env', default='libero', help='name of environment')
     parser.add_argument('--log_interval', default=1000, help='Logging interval.', type=int)
     parser.add_argument('--eval_interval', default=5000, help='Eval interval.', type=int)

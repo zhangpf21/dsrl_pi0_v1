@@ -104,6 +104,15 @@ def _print_control_stats(prefix, actions, noise, adapter_feature=None, adapter_g
     print(msg)
 
 
+def _adapter_action_diff_stats(actions, no_adapter_actions):
+    action_arr = np.asarray(actions, dtype=np.float32)
+    no_adapter_arr = np.asarray(no_adapter_actions, dtype=np.float32)
+    diff = action_arr - no_adapter_arr
+    diff_step_norm = np.linalg.norm(diff, axis=-1).mean()
+    action_step_norm = np.linalg.norm(action_arr, axis=-1).mean()
+    return float(diff_step_norm), float(diff_step_norm / (action_step_norm + 1e-6))
+
+
 def _reset_libero_env(env, variant, episode_id):
     env.reset()
     init_states = getattr(variant, 'libero_init_states', None)
@@ -432,11 +441,14 @@ def perform_control_eval(agent, env, i, variant, wandb_logger, agent_dp=None):
     eval_max_timesteps = int(getattr(variant, 'eval_max_timesteps', -1))
     max_timesteps = eval_max_timesteps if eval_max_timesteps > 0 else variant.max_timesteps
     eval_video_episodes = int(getattr(variant, 'eval_video_episodes', -1))
+    adapter_action_diff_episodes = int(getattr(variant, 'adapter_action_diff_episodes', 0))
     env_max_reward = variant.env_max_reward
     episode_returns = []
     highest_rewards = []
     success_rates = []
     episode_lens = []
+    adapter_action_diff_norms = []
+    adapter_action_diff_ratios = []
 
     rng = jax.random.PRNGKey(variant.seed+456)
 
@@ -492,6 +504,26 @@ def perform_control_eval(agent, env, i, variant, wandb_logger, agent_dp=None):
                     adapter_feature=adapter_feature,
                     adapter_gate=adapter_gate,
                 )["actions"]
+                if (
+                    adapter_feature is not None
+                    and adapter_gate is not None
+                    and rollout_id < adapter_action_diff_episodes
+                ):
+                    no_adapter_actions = _infer_pi0(
+                        agent_dp,
+                        obs_pi_zero,
+                        noise=noise,
+                        adapter_feature=adapter_feature,
+                        adapter_gate=np.zeros_like(adapter_gate),
+                    )["actions"]
+                    diff_norm, diff_ratio = _adapter_action_diff_stats(actions, no_adapter_actions)
+                    adapter_action_diff_norms.append(diff_norm)
+                    adapter_action_diff_ratios.append(diff_ratio)
+                    if t == 0:
+                        print(
+                            f"eval/{rollout_id} adapter_action_diff"
+                            f"[norm={diff_norm:.6f}, ratio={diff_ratio:.6f}]"
+                        )
                 if t == 0:
                     _print_control_stats(f"eval/{rollout_id}", actions, noise, adapter_feature, adapter_gate)
               
@@ -531,6 +563,19 @@ def perform_control_eval(agent, env, i, variant, wandb_logger, agent_dp=None):
     wandb_logger.log({'evaluation/avg_return': avg_return}, step=i)
     wandb_logger.log({'evaluation/success_rate': success_rate}, step=i)
     wandb_logger.log({'evaluation/avg_episode_len': avg_episode_len}, step=i)
+    if adapter_action_diff_norms:
+        wandb_logger.log(
+            {
+                'evaluation/adapter_action_diff_norm': np.mean(adapter_action_diff_norms),
+                'evaluation/adapter_action_diff_ratio': np.mean(adapter_action_diff_ratios),
+                'evaluation/adapter_action_diff_ratio_max': np.max(adapter_action_diff_ratios),
+            },
+            step=i,
+        )
+        summary_str += (
+            f"Adapter action diff norm: {np.mean(adapter_action_diff_norms):.6f}\n"
+            f"Adapter action diff ratio: {np.mean(adapter_action_diff_ratios):.6f}\n"
+        )
     for r in range(env_max_reward+1):
         more_or_equal_r = (np.array(highest_rewards) >= r).sum()
         more_or_equal_r_rate = more_or_equal_r / variant.eval_episodes
