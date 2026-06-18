@@ -117,12 +117,18 @@ def main(variant):
     
     if variant.env == 'libero':
         benchmark_dict = benchmark.get_benchmark_dict()
-        task_suite = benchmark_dict["libero_90"]()
-        task_id = 57
+        task_suite_name = getattr(variant, 'libero_task_suite', 'libero_90')
+        task_id = int(getattr(variant, 'libero_task_id', 57))
+        if task_suite_name not in benchmark_dict:
+            raise ValueError(f"Unknown LIBERO task suite {task_suite_name}. Available suites: {sorted(benchmark_dict)}")
+        task_suite = benchmark_dict[task_suite_name]()
         task = task_suite.get_task(task_id)
+        print(f"Using LIBERO task suite={task_suite_name}, task_id={task_id}, language={task.language}")
         env, task_description = _get_libero_env(task, 256, variant.seed)
         eval_env = env
         variant.libero_init_states = task_suite.get_task_init_states(task_id)
+        variant.libero_task_suite = task_suite_name
+        variant.libero_task_id = task_id
         variant.libero_num_steps_wait = 10
         variant.task_description = task_description
         variant.env_max_reward = 1

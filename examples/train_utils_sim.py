@@ -104,13 +104,13 @@ def _print_control_stats(prefix, actions, noise, adapter_feature=None, adapter_g
     print(msg)
 
 
-def _adapter_action_diff_stats(actions, no_adapter_actions):
-    action_arr = np.asarray(actions, dtype=np.float32)
-    no_adapter_arr = np.asarray(no_adapter_actions, dtype=np.float32)
+def _adapter_action_diff_stats(action, no_adapter_action):
+    action_arr = np.asarray(action, dtype=np.float32)
+    no_adapter_arr = np.asarray(no_adapter_action, dtype=np.float32)
     diff = action_arr - no_adapter_arr
-    diff_step_norm = np.linalg.norm(diff, axis=-1).mean()
-    action_step_norm = np.linalg.norm(action_arr, axis=-1).mean()
-    return float(diff_step_norm), float(diff_step_norm / (action_step_norm + 1e-6))
+    diff_norm = np.linalg.norm(diff)
+    action_norm = np.linalg.norm(action_arr)
+    return float(diff_norm), float(diff_norm / (action_norm + 1e-6))
 
 
 def _reset_libero_env(env, variant, episode_id):
@@ -460,6 +460,7 @@ def perform_control_eval(agent, env, i, variant, wandb_logger, agent_dp=None):
             
         image_list = [] # for visualization
         rewards = []
+        no_adapter_actions = None
         
 
         for t in tqdm(range(max_timesteps)):
@@ -516,18 +517,22 @@ def perform_control_eval(agent, env, i, variant, wandb_logger, agent_dp=None):
                         adapter_feature=adapter_feature,
                         adapter_gate=np.zeros_like(adapter_gate),
                     )["actions"]
-                    diff_norm, diff_ratio = _adapter_action_diff_stats(actions, no_adapter_actions)
-                    adapter_action_diff_norms.append(diff_norm)
-                    adapter_action_diff_ratios.append(diff_ratio)
                     if t == 0:
+                        diff_norm, diff_ratio = _adapter_action_diff_stats(actions[0], no_adapter_actions[0])
                         print(
                             f"eval/{rollout_id} adapter_action_diff"
                             f"[norm={diff_norm:.6f}, ratio={diff_ratio:.6f}]"
                         )
+                else:
+                    no_adapter_actions = None
                 if t == 0:
                     _print_control_stats(f"eval/{rollout_id}", actions, noise, adapter_feature, adapter_gate)
               
             action_t = actions[t % query_frequency]
+            if no_adapter_actions is not None:
+                diff_norm, diff_ratio = _adapter_action_diff_stats(action_t, no_adapter_actions[t % query_frequency])
+                adapter_action_diff_norms.append(diff_norm)
+                adapter_action_diff_ratios.append(diff_ratio)
             
             if 'libero' in variant.env:
                 obs, reward, done, _ = env.step(action_t)

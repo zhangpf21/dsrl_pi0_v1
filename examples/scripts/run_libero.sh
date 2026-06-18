@@ -23,18 +23,20 @@ python3 -m pip install mujoco==3.3.1 "numpy<2"
 python3 -m examples.launch_train_sim \
 --algorithm pixel_sac \
 --env libero \
---prefix dsrl_pi0_libero_adapter \
+--libero_task_suite libero_goal \
+--libero_task_id 3 \
+--prefix dsrl_pi0_libero_adapter_task3 \
 --wandb_project ${proj_name} \
 --batch_size 256 \
 --discount 0.999 \
 --seed 0 \
---max_steps 200000  \
+--max_steps 500000  \
 --eval_interval 10000 \
 --log_interval 500 \
 --eval_episodes 50 \
---eval_video_episodes 0 \
+--eval_video_episodes 10 \
 --adapter_action_diff_episodes 3 \
---multi_grad_step 10 \
+--multi_grad_step 20 \
 --start_online_updates 1000 \
 --resize_image 64 \
 --action_magnitude 1.0 \
