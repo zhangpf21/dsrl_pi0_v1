@@ -22,7 +22,7 @@ pip install mujoco==3.3.1
 python3 examples/launch_train_sim.py \
 --algorithm pixel_sac \
 --env libero \
---prefix dsrl_pi0_libero \
+--prefix dsrl_pi0_libero_task9 \
 --wandb_project ${proj_name} \
 --batch_size 256 \
 --discount 0.999 \
@@ -30,12 +30,13 @@ python3 examples/launch_train_sim.py \
 --max_steps 500000  \
 --eval_interval 10000 \
 --log_interval 500 \
---eval_episodes 10 \
+--eval_episodes 30 \
 --multi_grad_step 20 \
 --start_online_updates 500 \
 --resize_image 64 \
 --action_magnitude 1.0 \
---query_freq 20 \
+--query_freq 10 \
 --hidden_dims 128 \
---task_id 57 \
---steering_strength_schedule 0.5,1.0,1.5
+--libero_suite libero_10 \
+--task_id 9 \
+--steering_strength_schedule 1
