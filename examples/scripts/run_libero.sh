@@ -37,6 +37,6 @@ python3 examples/launch_train_sim.py \
 --action_magnitude 1.0 \
 --query_freq 10 \
 --hidden_dims 128 \
---libero_suite libero_10 \
+--libero_suite libero_goal \
 --task_id 9 \
 --steering_strength_schedule 1
